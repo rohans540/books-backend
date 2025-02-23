@@ -11,7 +11,7 @@ definitions:
       year:
         type: integer
     type: object
-host: 13.53,47.251:8000
+host: 13.53.47.251:8000
 info:
   contact: {}
   description: This is a simple API for managing books.
