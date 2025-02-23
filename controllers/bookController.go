@@ -3,7 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -24,35 +24,23 @@ import (
 // @Success 200 {array} models.Book
 // @Router /books [get]
 func GetBooks(ctx *gin.Context) {
-	// Get pagination parameters
-	limit, err := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
-	if err != nil || limit <= 0 {
-		limit = 10
-	}
 
-	offset, err := strconv.Atoi(ctx.DefaultQuery("offset", "0"))
-	if err != nil || offset < 0 {
-		offset = 0
-	}
-
-	var books []models.Book
-	cacheKey := fmt.Sprintf("books:limit=%d:offset=%d", limit, offset)
-
-	// Check cache first
-	cachedBooks, err := redis.RedisClient.Get(context.Background(), cacheKey).Result()
-	if err == nil {
-		json.Unmarshal([]byte(cachedBooks), &books)
-		ctx.JSON(http.StatusOK, books)
+	cachedBooks, err := redis.RedisClient.Get(context.Background(), "books").Result()
+	if err == nil && cachedBooks != "" {
+		ctx.Header("Content-Type", "application/json")
+		ctx.String(http.StatusOK, cachedBooks)
 		return
 	}
 
-	// Fetch from database with pagination
-	database.DB.Limit(limit).Offset(offset).Find(&books)
+	var books []models.Book
+	result := database.DB.Find(&books)
+	if result.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching books"})
+		return
+	}
 
-	// Store in Redis cache
-	data, _ := json.Marshal(books)
-	redis.RedisClient.Set(context.Background(), cacheKey, data, 0)
-
+	booksJSON, _ := json.Marshal(books)
+	redis.RedisClient.Set(context.Background(), "books", booksJSON, 0)
 	ctx.JSON(http.StatusOK, books)
 }
 
@@ -145,34 +133,41 @@ func CreateBook(ctx *gin.Context) {
 func UpdateBook(ctx *gin.Context) {
 	id := ctx.Param("id")
 	var book models.Book
-
 	result := database.DB.First(&book, id)
 	if result.Error != nil {
 		ctx.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 		return
 	}
 
-	if err := ctx.ShouldBindJSON(&book); err != nil {
+	var updatedBook models.Book
+	if err := ctx.ShouldBindJSON(&updatedBook); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON data"})
 		return
 	}
 
-	if book.Title == "" {
+	if updatedBook.Title == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Title cannot be empty"})
 		return
 	}
-	if book.Author == "" {
+	if updatedBook.Author == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Author cannot be empty"})
 		return
 	}
-	if book.Year <= 0 {
+	if updatedBook.Year <= 0 {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Year must be a valid positive number"})
 		return
 	}
-
+	book.Title = updatedBook.Title
+	book.Author = updatedBook.Author
+	book.Year = updatedBook.Year
 	database.DB.Save(&book)
 
-	redis.RedisClient.Del(context.Background(), "books", "book:"+id)
+	deletedKeys := []string{"books", "book:" + id}
+	redis.RedisClient.Del(context.Background(), deletedKeys...)
+
+	val, _ := redis.RedisClient.Get(context.Background(), "books").Result()
+	log.Println("Redis books cache after update:", val)
+
 	kafka.PublishMessage("book_events", "Book updated: "+book.Title)
 
 	ctx.JSON(http.StatusOK, book)
@@ -197,8 +192,12 @@ func DeleteBook(ctx *gin.Context) {
 		return
 	}
 
-	database.DB.Delete(&book)
-	redis.RedisClient.Del(context.Background(), "books", "book:"+id)
+	database.DB.Unscoped().Delete(&book)
+	deletedKeys := []string{"books", "book:" + id}
+	redis.RedisClient.Del(context.Background(), deletedKeys...)
+	val, _ := redis.RedisClient.Get(context.Background(), "books").Result()
+	log.Println("Redis books cache after delete:", val)
+
 	kafka.PublishMessage("book_events", "Book deleted: "+strconv.Itoa(int(book.ID)))
 
 	ctx.JSON(http.StatusOK, gin.H{"message": "Book deleted successfully"})

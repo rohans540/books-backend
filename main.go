@@ -18,7 +18,7 @@ import (
 // @title Books API
 // @version 1.0
 // @description This is a simple API for managing books.
-// @host localhost:8000
+// @host 13.53,47.251:8000
 // @BasePath /
 
 func main() {
@@ -29,7 +29,13 @@ func main() {
 
 	router := gin.Default()
 
-	router.Use(cors.Default())
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
 
 	// Swagger Documentation
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
