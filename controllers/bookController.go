@@ -24,23 +24,36 @@ import (
 // @Success 200 {array} models.Book
 // @Router /books [get]
 func GetBooks(ctx *gin.Context) {
+	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))  // Default limit: 10
+	offset, _ := strconv.Atoi(ctx.DefaultQuery("offset", "0")) // Default offset: 0
 
 	cachedBooks, err := redis.RedisClient.Get(context.Background(), "books").Result()
 	if err == nil && cachedBooks != "" {
-		ctx.Header("Content-Type", "application/json")
-		ctx.String(http.StatusOK, cachedBooks)
-		return
+		var books []models.Book
+		if json.Unmarshal([]byte(cachedBooks), &books) == nil {
+			// Apply pagination on cached books
+			if offset >= len(books) {
+				ctx.JSON(http.StatusOK, []models.Book{})
+				return
+			}
+			end := offset + limit
+			if end > len(books) {
+				end = len(books)
+			}
+			ctx.JSON(http.StatusOK, books[offset:end])
+			return
+		}
 	}
 
 	var books []models.Book
-	result := database.DB.Find(&books)
+	result := database.DB.Limit(limit).Offset(offset).Find(&books)
 	if result.Error != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching books"})
 		return
 	}
 
 	booksJSON, _ := json.Marshal(books)
-	redis.RedisClient.Set(context.Background(), "books", booksJSON, 0)
+	redis.RedisClient.Set(context.Background(), "books", booksJSON, 0) // Cache books data
 	ctx.JSON(http.StatusOK, books)
 }
 
