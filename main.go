@@ -18,7 +18,7 @@ import (
 // @title Books API
 // @version 1.0
 // @description This is a simple API for managing books.
-// @host 13.53,47.251:8000
+// @host 13.53.47.251:8000
 // @BasePath /
 
 func main() {
